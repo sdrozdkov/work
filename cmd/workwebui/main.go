@@ -79,6 +79,7 @@ func newSentinelPool(addr string, database int) *string {
 		},
 	}
 	master, _ := sntnl.MasterAddr()
+	fmt.Println(master)
 	return &master
 
 }
