@@ -1,11 +1,11 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
-	"strconv"
 	"time"
 
 	sentinel "github.com/FZambia/go-sentinel"
@@ -31,14 +31,14 @@ func main() {
 	fmt.Println("namespace = ", *redisNamespace)
 	fmt.Println("listen = ", *webHostPort)
 
-	database, err := strconv.Atoi(*redisDatabase)
-	if err != nil {
-		fmt.Printf("Error: %v is not a valid database value", *redisDatabase)
-		return
-	}
+	// database, err := strconv.Atoi(*redisDatabase)
+	// if err != nil {
+	// 	fmt.Printf("Error: %v is not a valid database value", *redisDatabase)
+	// 	return
+	// }
 
-	redisMaster := newSentinelPool(*sentinelHostPort, database)
-	pool := newPool(*redisMaster, database)
+	pool := newSentinelPool()
+	// pool := newPool(*redisMaster, database)
 
 	server := webui.NewServer(*redisNamespace, pool, *webHostPort)
 	server.Start()
@@ -65,9 +65,9 @@ func newPool(addr string, database int) *redis.Pool {
 	}
 }
 
-func newSentinelPool(addr string, database int) *string {
+func newSentinelPool() *redis.Pool {
 	sntnl := &sentinel.Sentinel{
-		Addrs:      []string{addr},
+		Addrs:      []string{"redis-sentinel:26379"},
 		MasterName: "mymaster",
 		Dial: func(addr string) (redis.Conn, error) {
 			timeout := 500 * time.Millisecond
@@ -78,8 +78,27 @@ func newSentinelPool(addr string, database int) *string {
 			return c, nil
 		},
 	}
-	master, _ := sntnl.MasterAddr()
-	fmt.Println(master)
-	return &master
-
+	return &redis.Pool{
+		MaxIdle:     3,
+		MaxActive:   64,
+		Wait:        true,
+		IdleTimeout: 240 * time.Second,
+		Dial: func() (redis.Conn, error) {
+			masterAddr, err := sntnl.MasterAddr()
+			if err != nil {
+				return nil, err
+			}
+			c, err := redis.Dial("tcp", masterAddr)
+			if err != nil {
+				return nil, err
+			}
+			return c, nil
+		},
+		TestOnBorrow: func(c redis.Conn, t time.Time) error {
+			if !sentinel.TestRole(c, "master") {
+				return errors.New("Role check failed")
+			}
+			return nil
+		},
+	}
 }

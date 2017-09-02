@@ -92,6 +92,7 @@ func (w *Server) Stop() {
 }
 
 func (c *context) queues(rw web.ResponseWriter, r *web.Request) {
+	fmt.Println(c.client)
 	response, err := c.client.Queues()
 	render(rw, response, err)
 }
