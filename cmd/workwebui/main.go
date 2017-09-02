@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -8,15 +9,17 @@ import (
 	"strconv"
 	"time"
 
+	sentinel "github.com/FZambia/go-sentinel"
 	"github.com/garyburd/redigo/redis"
 	"github.com/gocraft/work/webui"
 )
 
 var (
-	redisHostPort  = flag.String("redis", ":6379", "redis hostport")
-	redisDatabase  = flag.String("database", "0", "redis database")
-	redisNamespace = flag.String("ns", "work", "redis namespace")
-	webHostPort    = flag.String("listen", ":5040", "hostport to listen for HTTP JSON API")
+	redisHostPort    = flag.String("redis", ":6379", "redis hostport")
+	sentinelHostPort = flag.String("redis-sentinel", ":26379", "redis-sentinel hostport")
+	redisDatabase    = flag.String("database", "0", "redis database")
+	redisNamespace   = flag.String("ns", "work", "redis namespace")
+	webHostPort      = flag.String("listen", ":5040", "hostport to listen for HTTP JSON API")
 )
 
 func main() {
@@ -24,6 +27,7 @@ func main() {
 
 	fmt.Println("Starting workwebui:")
 	fmt.Println("redis = ", *redisHostPort)
+	fmt.Println("sentinel = ", *sentinelHostPort)
 	fmt.Println("database = ", *redisDatabase)
 	fmt.Println("namespace = ", *redisNamespace)
 	fmt.Println("listen = ", *webHostPort)
@@ -34,7 +38,8 @@ func main() {
 		return
 	}
 
-	pool := newPool(*redisHostPort, database)
+	// pool := newPool(*redisHostPort, database)
+	pool := newSentinelPool(*sentinelHostPort, database)
 
 	server := webui.NewServer(*redisNamespace, pool, *webHostPort)
 	server.Start()
@@ -58,5 +63,43 @@ func newPool(addr string, database int) *redis.Pool {
 			return redis.DialURL(addr, redis.DialDatabase(database))
 		},
 		Wait: true,
+	}
+}
+
+func newSentinelPool(addr string, database int) *redis.Pool {
+	sntnl := &sentinel.Sentinel{
+		Addrs:      []string{addr},
+		MasterName: "mymaster",
+		Dial: func(addr string) (redis.Conn, error) {
+			timeout := 500 * time.Millisecond
+			c, err := redis.DialTimeout("tcp", addr, timeout, timeout, timeout)
+			if err != nil {
+				return nil, err
+			}
+			return c, nil
+		},
+	}
+	return &redis.Pool{
+		MaxIdle:     3,
+		MaxActive:   64,
+		Wait:        true,
+		IdleTimeout: 240 * time.Second,
+		Dial: func() (redis.Conn, error) {
+			masterAddr, err := sntnl.MasterAddr()
+			if err != nil {
+				return nil, err
+			}
+			c, err := redis.DialURL(masterAddr, redis.DialDatabase(database))
+			if err != nil {
+				return nil, err
+			}
+			return c, nil
+		},
+		TestOnBorrow: func(c redis.Conn, t time.Time) error {
+			if !sentinel.TestRole(c, "master") {
+				return errors.New("Role check failed")
+			}
+			return nil
+		},
 	}
 }
