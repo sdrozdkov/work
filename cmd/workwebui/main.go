@@ -26,7 +26,7 @@ func main() {
 
 	fmt.Println("Starting workwebui:")
 	fmt.Println("redis = ", *redisHostPort)
-	fmt.Println("sentinel = ", *sentinelHostPort)
+	fmt.Println("redis-sentinel = ", *sentinelHostPort)
 	fmt.Println("database = ", *redisDatabase)
 	fmt.Println("namespace = ", *redisNamespace)
 	fmt.Println("listen = ", *webHostPort)
@@ -37,7 +37,7 @@ func main() {
 	// 	return
 	// }
 
-	pool := newSentinelPool()
+	pool := newSentinelPool(*sentinelHostPort)
 	// pool := newPool(*redisMaster, database)
 
 	server := webui.NewServer(*redisNamespace, pool, *webHostPort)
@@ -65,9 +65,9 @@ func newPool(addr string, database int) *redis.Pool {
 	}
 }
 
-func newSentinelPool() *redis.Pool {
+func newSentinelPool(addr string) *redis.Pool {
 	sntnl := &sentinel.Sentinel{
-		Addrs:      []string{"redis-sentinel:26379"},
+		Addrs:      []string{addr},
 		MasterName: "mymaster",
 		Dial: func(addr string) (redis.Conn, error) {
 			timeout := 500 * time.Millisecond
