@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -38,8 +37,8 @@ func main() {
 		return
 	}
 
-	// pool := newPool(*redisHostPort, database)
-	pool := newSentinelPool(*sentinelHostPort, database)
+	redisMaster := newSentinelPool(*sentinelHostPort, database)
+	pool := newPool(*redisMaster, database)
 
 	server := webui.NewServer(*redisNamespace, pool, *webHostPort)
 	server.Start()
@@ -66,7 +65,7 @@ func newPool(addr string, database int) *redis.Pool {
 	}
 }
 
-func newSentinelPool(addr string, database int) *redis.Pool {
+func newSentinelPool(addr string, database int) *string {
 	sntnl := &sentinel.Sentinel{
 		Addrs:      []string{addr},
 		MasterName: "mymaster",
@@ -79,27 +78,7 @@ func newSentinelPool(addr string, database int) *redis.Pool {
 			return c, nil
 		},
 	}
-	return &redis.Pool{
-		MaxIdle:     3,
-		MaxActive:   64,
-		Wait:        true,
-		IdleTimeout: 240 * time.Second,
-		Dial: func() (redis.Conn, error) {
-			masterAddr, err := sntnl.MasterAddr()
-			if err != nil {
-				return nil, err
-			}
-			c, err := redis.DialURL(masterAddr, redis.DialDatabase(database))
-			if err != nil {
-				return nil, err
-			}
-			return c, nil
-		},
-		TestOnBorrow: func(c redis.Conn, t time.Time) error {
-			if !sentinel.TestRole(c, "master") {
-				return errors.New("Role check failed")
-			}
-			return nil
-		},
-	}
+	master, _ := sntnl.MasterAddr()
+	return &master
+
 }
